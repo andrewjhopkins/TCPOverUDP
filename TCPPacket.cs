@@ -9,10 +9,10 @@
         public bool SYN { get; set; }
         public bool ACK { get; set; }
         public ushort WindowSize { get; set; }
-        public int DataLength { get; set; }
+        public uint DataLength { get; set; }
         public byte[] Data { get; set; }
 
-        public int DataOffset =
+        public static int DataOffset =
             sizeof(ushort) +
             sizeof(ushort) +
             sizeof(uint) +
@@ -32,7 +32,7 @@
             SYN = syn;
             ACK = ack;
             Data = data ?? new byte[0];
-            DataLength = Data.Length;
+            DataLength = (uint)Data.Length;
         }
 
         public TCPPacket(byte[] data) 
@@ -59,10 +59,10 @@
             WindowSize = BitConverter.ToUInt16(data.Skip(position).Take(sizeof(ushort)).ToArray());
             position += sizeof(ushort);
 
-            DataLength = BitConverter.ToInt32(data.Skip(position).Take(sizeof(int)).ToArray());
-            position += sizeof(int);
+            DataLength = BitConverter.ToUInt32(data.Skip(position).Take(sizeof(uint)).ToArray());
+            position += sizeof(uint);
 
-            Data = data.Skip(position).Take(DataLength).ToArray();
+            Data = data.Skip(position).Take((int)DataLength).ToArray();
 
             return;
         }

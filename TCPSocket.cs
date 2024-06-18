@@ -8,7 +8,12 @@ namespace TCPOverUDP
         public string DestinationIpAddress { get; set; }
         public ushort DestinationPort { get; set; }
         public ushort SourcePort { get; set; }
+        public ushort WindowSize { get; set; } = 1;
+
         private uint Seq { get; set; }
+        private int LastSentIndex { get; set; } = -1;
+
+        private List<TCPPacket> Window { get; set; } = new List<TCPPacket>();
 
         // Client Socket
         public TCPSocket(string destinationIpAddress, ushort destinationPort, ushort sourcePort) 
@@ -19,7 +24,7 @@ namespace TCPOverUDP
 
             Seq = (uint)new Random().Next(-int.MaxValue, int.MaxValue);
 
-            var synPacket = new TCPPacket(sourcePort, destinationPort, Seq, 0, 1, true, false, new byte[0]);
+            var synPacket = new TCPPacket(sourcePort, destinationPort, Seq, 0, WindowSize, true, false, new byte[0]);
             var synPacketBytes = synPacket.ToBytes();
 
             SendViaUDP(synPacketBytes);
@@ -39,7 +44,7 @@ namespace TCPOverUDP
             }
 
 
-            var ackPacket = new TCPPacket(SourcePort, DestinationPort, Seq, synAckPacket.SequenceNumber + 1, 1, false, true, new byte[0]);
+            var ackPacket = new TCPPacket(SourcePort, DestinationPort, Seq, synAckPacket.SequenceNumber + 1, WindowSize, false, true, new byte[0]);
             SendViaUDP(ackPacket.ToBytes());
             Console.WriteLine("Sending ACK packet... handshake 3/3");
         }
@@ -57,7 +62,7 @@ namespace TCPOverUDP
             DestinationIpAddress = destinationIpAddress;
             DestinationPort = destinationPort;
 
-            var synAckPacket = new TCPPacket(sourcePort, destinationPort, Seq, synPacket.SequenceNumber + 1, 1, true, true, new byte[0]);
+            var synAckPacket = new TCPPacket(sourcePort, destinationPort, Seq, synPacket.SequenceNumber + 1, WindowSize, true, true, new byte[0]);
             SendViaUDP(synAckPacket.ToBytes());
             Console.WriteLine($"Sending SYN ACK packet... to port: {destinationPort} handshake 2/3");
 
@@ -77,6 +82,64 @@ namespace TCPOverUDP
             return;
         }
 
+        public void Send(string filePath)
+        {
+            var path = Path.GetFullPath(filePath);
+            var fileInfo = new FileInfo(path);
+
+            if (!fileInfo.Exists)
+            {
+                Console.WriteLine($"File: {filePath} does not exist");
+                return;
+            }
+
+            var fileName = fileInfo.Name;
+            var fileSize = fileInfo.Length;
+
+            using (var fileStream = File.OpenRead(filePath))
+            { 
+                var packets = new List<TCPPacket>();
+                Console.WriteLine("Start sending...");
+
+                var readBytes = 0;
+
+                while (readBytes < fileSize)
+                {
+                    packets.Clear();
+                    for (var i = 0; readBytes < fileSize; i++)
+                    {
+                        var data = new byte[1408 - TCPPacket.DataOffset];
+                        var lengthOfBytesRead = fileStream.Read(data, 0, data.Length);
+
+                        var fileData = new byte[1408 - TCPPacket.DataOffset];
+                        Array.Copy(data, fileData, lengthOfBytesRead);
+
+                        if (lengthOfBytesRead == 0)
+                        {
+                            break;
+                        }
+
+                        readBytes += lengthOfBytesRead;
+                        var packet = new TCPPacket(SourcePort, DestinationPort, Seq, 0, WindowSize, false, false, fileData);
+                        packets.Add(packet);
+                        Seq += packet.DataLength + 1;
+                    }
+
+                    Window.AddRange(packets);
+
+                    for (var i = LastSentIndex + 1; i < WindowSize && i < Window.Count(); i++)
+                    { 
+                        var packet = Window[i];
+                        SendViaUDP(packet.ToBytes());
+                        Console.WriteLine($"Packet sent.. {packet.SequenceNumber}");
+                        LastSentIndex += 1;
+                    }
+
+                    Console.WriteLine($"WindowSize : {Window.Count()}, LastSentIndex: {LastSentIndex}, Progress: %{readBytes / fileSize * 100}");
+                    // TODO: Acknowledge Recieve()
+                }
+            }
+        }
 
         private void SendViaUDP(byte[] data)
         {
