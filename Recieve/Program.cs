@@ -1,9 +1,11 @@
-﻿namespace Recieve;
+﻿using TCPOverUDP;
+
+namespace Recieve;
 
 class Program
 {
     static void Main(string[] args)
-    { 
-        Console.WriteLine("Hello, World!");
+    {
+        var tcpSocket = new TCPSocket(12345);
     }
 }
