@@ -9,11 +9,11 @@ namespace TCPOverUDP
         public ushort DestinationPort { get; set; }
         public ushort SourcePort { get; set; }
         public ushort WindowSize { get; set; } = 1;
-
         private uint Seq { get; set; }
         private int LastSentIndex { get; set; } = -1;
-
         private List<TCPPacket> Window { get; set; } = new List<TCPPacket>();
+        private int DuplicateAcks { get; set; }
+        private uint ExpectedSequenceNumber { get; set; }
 
         // Client Socket
         public TCPSocket(string destinationIpAddress, ushort destinationPort, ushort sourcePort) 
@@ -78,6 +78,8 @@ namespace TCPOverUDP
                 Console.WriteLine($"Ack packet recieved... from port: {recievePort} handshake 3/3");
             }
 
+            ExpectedSequenceNumber = ackPacket.SequenceNumber;
+
             Console.WriteLine("Connected");
             return;
         }
@@ -106,7 +108,7 @@ namespace TCPOverUDP
                 while (readBytes < fileSize)
                 {
                     packets.Clear();
-                    for (var i = 0; readBytes < fileSize; i++)
+                    for (var i = 0; Window.Count() <= WindowSize && readBytes < fileSize; i++)
                     {
                         var data = new byte[1408 - TCPPacket.DataOffset];
                         var lengthOfBytesRead = fileStream.Read(data, 0, data.Length);
@@ -136,7 +138,96 @@ namespace TCPOverUDP
                     }
 
                     Console.WriteLine($"WindowSize : {Window.Count()}, LastSentIndex: {LastSentIndex}, Progress: %{readBytes / fileSize * 100}");
-                    // TODO: Acknowledge Recieve()
+                    AckRecieve();
+                }
+            }
+        }
+
+        public void Recieve()
+        {
+            Console.WriteLine("Start Recieving...");
+            var buffer = new List<byte>();
+            while (true)
+            {
+                var data = RecieveBytes();
+                if (data == null)
+                {
+                    continue;
+                }
+                if (data.Length == 0)
+                {
+                    break;
+                }
+                buffer.AddRange(data);
+            }
+
+        }
+
+        private byte[] RecieveBytes()
+        {
+            Console.WriteLine("Listening...");
+            var (packet, _, _) = RecieveViaUDP(DestinationPort);
+
+            byte[] recievedBytes = null;
+
+            if (packet.SequenceNumber == ExpectedSequenceNumber)
+            {
+                ExpectedSequenceNumber += packet.DataLength + 1;
+                recievedBytes = packet.Data;
+            }
+            else
+            {
+                Console.WriteLine("Invalid TCP Packet");
+                Console.WriteLine($"Seq: {packet.SequenceNumber} expected: {ExpectedSequenceNumber}");
+            }
+
+            var ackRecievePacket = new TCPPacket(SourcePort, DestinationPort, Seq++, ExpectedSequenceNumber, WindowSize, false, true, null);
+
+            Thread.Sleep(1000);
+            Console.WriteLine("Sending Ack");
+            SendViaUDP(ackRecievePacket.ToBytes());
+
+            return recievedBytes ?? Array.Empty<byte>();
+        }
+
+        private void AckRecieve()
+        {
+            TCPPacket ackPacket = null;
+            while (true)
+            {
+                while (ackPacket == null || !(ackPacket.ACK))
+                {
+                    Console.WriteLine("Listening for Ack...");
+                    (ackPacket, _, _) = RecieveViaUDP(DestinationPort);
+                }
+
+                int firstUnackedPacketIndex;
+                for (firstUnackedPacketIndex = 0; firstUnackedPacketIndex < Window.Count(); firstUnackedPacketIndex++)
+                {
+                    var expectedAcknowledgementNumber = Window[firstUnackedPacketIndex].GetExpectedAcknowledgement();
+                    if (ackPacket.AcknowledgementNumber < expectedAcknowledgementNumber)
+                    {
+                        break;
+                    }
+                }
+
+                if (firstUnackedPacketIndex == 0)
+                {
+                    DuplicateAcks += 1;
+                    if (DuplicateAcks == 3)
+                    { 
+                        // Handle Loss. Resend last packet with smaller window
+                    }
+                    continue;
+                }
+
+                DuplicateAcks = 0;
+                for (var i = 0; i < firstUnackedPacketIndex; i++)
+                {
+                    Window.RemoveAt(0);
+                    LastSentIndex -= 1;
+                    // Increase Window Size
+                    // WindowSize 
                 }
             }
         }

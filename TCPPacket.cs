@@ -101,5 +101,10 @@
 
             return bytes;
         }
+
+        public uint GetExpectedAcknowledgement()
+        {
+            return SequenceNumber + DataLength + 1;
+        }
     }
 }
